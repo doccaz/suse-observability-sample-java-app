@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-app-bci-test
+  namespace: producao
+  labels:
+    app: java-app-bci-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-app-bci-test
+  template:
+    metadata:
+      labels:
+        app: java-app-bci-test
+    spec:
+      containers:
+      - name: java-app
+        image: seu-registry/java-app-bci-test:1.0
+        # Contexto de segurança para validar a execução rootless
+        securityContext:
+          runAsNonRoot: true
+        ports:
+          - containerPort: 8080
+        env:
+          # Identificação da Aplicação
+          - name: OTEL_SERVICE_NAME
+            value: "java-app-prod-test"
+          - name: OTEL_RESOURCE_ATTRIBUTES
+            value: "deployment.environment=production,service.namespace=producao,os.description=sles-bci"
+
+          # Habilita exportação de LOGS e TRACES via OTLP
+          - name: OTEL_LOGS_EXPORTER
+            value: "otlp"
+          - name: OTEL_TRACES_EXPORTER
+            value: "otlp"
+          - name: OTEL_METRICS_EXPORTER
+            value: "none"
+
+          # Configurações do Endpoint do SUSE Observability
+          # Substitua o IP pelo host onde seu cluster está expondo o OTLP
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://<IP_OU_HOST_SUSE_OBSERVABILITY_HOMOLOGACAO>:4317"
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: "grpc"
