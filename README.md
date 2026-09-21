@@ -1,5 +1,7 @@
 # SUSE Observability – Sample Java App
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Aplicação Spring Boot mínima usada para demonstrar como uma aplicação Java
 "normal" (fora de um cluster Kubernetes) envia **logs** e **traces** via
 OTLP para o SUSE Observability, usando o agente Java do OpenTelemetry
