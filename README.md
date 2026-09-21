@@ -237,19 +237,17 @@ as traces aparecem na UI do SUSE Observability em poucos segundos:
 ## Limitações conhecidas
 
 - **Correlação de topologia/componentes pode não funcionar mesmo com
-  traces íntegras.** Em pelo menos uma instância de teste (chart
-  `suse-observability-2.1.0`, imagem `7.0.0-snapshot...`, uma versão
-  pré-release), clicar no nome de um serviço a partir da lista de Traces
-  (ou acessar as views **Open Telemetry > Services / Service instances /
-  Service namespaces**) resulta em **"Component not found"** ou "No
-  components found", mesmo com as traces sendo ingeridas e pesquisáveis
-  normalmente na view de Traces. Ou seja: **ingestão e busca de
-  traces/logs via OTLP funcionam independentemente da sincronização de
-  componentes/topologia** — se você só precisa validar que a
-  instrumentação está funcionando, a view de Traces já é suficiente. Se
-  esse problema se repetir no seu ambiente, vale checar a versão do chart
-  e abrir um chamado de suporte antes de assumir erro de instrumentação
-  do lado da aplicação.
+  traces íntegras.** Em pelo menos uma instância de teste, clicar no nome
+  de um serviço a partir da lista de Traces (ou acessar as views **Open
+  Telemetry > Services / Service instances / Service namespaces**)
+  resulta em **"Component not found"** ou "No components found", mesmo
+  com as traces sendo ingeridas e pesquisáveis normalmente na view de
+  Traces. Ou seja: **ingestão e busca de traces/logs via OTLP funcionam
+  independentemente da sincronização de componentes/topologia** — se você
+  só precisa validar que a instrumentação está funcionando, a view de
+  Traces já é suficiente. Se esse problema se repetir no seu ambiente,
+  vale checar a versão do chart e abrir um chamado de suporte antes de
+  assumir erro de instrumentação do lado da aplicação.
 - **API REST/GraphQL da plataforma não testada com a API key de
   ingestão.** Este projeto só valida o caminho de ingestão OTLP
   (`OTEL_EXPORTER_OTLP_HEADERS`); consultas programáticas via API do
