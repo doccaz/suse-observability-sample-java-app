@@ -17,6 +17,8 @@ adicionados manualmente via API.
 - [Conectando a um SUSE Observability fora do cluster](#conectando-a-um-suse-observability-fora-do-cluster)
 - [Autenticação (API key)](#autenticação-api-key)
 - [Demo: auto-instrumentação vs. instrumentação manual](#demo-auto-instrumentação-vs-instrumentação-manual)
+- [Verificando as traces na UI](#verificando-as-traces-na-ui)
+- [Limitações conhecidas](#limitações-conhecidas)
 - [Deploy no Kubernetes](#deploy-no-kubernetes)
 - [Segurança](#segurança)
 
@@ -201,6 +203,61 @@ No SUSE Observability, compare os spans de `/api/order/*` com os de
 `/api/manual/order/*`: a estrutura (server → client → server) é idêntica,
 mas só o segundo grupo carrega os atributos customizados.
 
+## Verificando as traces na UI
+
+Depois de rodar os endpoints (`curl http://localhost:8080/api/order/42` etc.),
+as traces aparecem na UI do SUSE Observability em poucos segundos:
+
+1. Abra a UI (o mesmo host configurado em `OTEL_EXPORTER_OTLP_ENDPOINT`,
+   geralmente via ingress/porta 443, não a porta OTLP 4317/4318).
+2. No menu lateral (ícone de hambúrguer no canto superior esquerdo), role
+   até encontrar **Traces** — é um item de nível superior, fora da seção
+   "Open Telemetry".
+3. A lista mostra todas as traces recentes, com **Status**, **OTEL
+   service**, **Name** (rota HTTP), **Duration** e **Start time**. Use os
+   filtros (`Status`, `Attributes`, `Duration`, intervalo de tempo) para
+   restringir a busca — por exemplo, filtre por `order-service` ou
+   `inventory-service` para achar as traces geradas pelos testes acima.
+4. Clique em uma linha da tabela para expandir o waterfall da trace
+   inline: você verá o span `GET /api/order/{itemId}` (server, no
+   `order-service`) contendo um span filho `GET` (client) que por sua vez
+   contém `GET /api/inventory/{itemId}` (server, no `inventory-service`) —
+   exatamente a cadeia server → client → server descrita na seção anterior.
+5. Clique em um span específico do waterfall para abrir o painel **Span
+   details** à direita, com `Status`, `Span kind`, `Scope name/version`,
+   `Start/End time` etc.
+6. Expanda **Span attributes** nesse painel para ver os atributos do span.
+   Nos endpoints `/api/manual/*`, é aqui que aparecem os atributos
+   customizados adicionados via `Span.current().setAttribute(...)`:
+   `order.item_id`, `order.available`, `order.status` (e os equivalentes
+   `inventory.*` no lado do inventory-service) — ao lado dos atributos
+   HTTP/rede padrão (`http.route`, `http.response.status_code`,
+   `network.peer.address` etc.) que vêm de graça da auto-instrumentação.
+
+## Limitações conhecidas
+
+- **Correlação de topologia/componentes pode não funcionar mesmo com
+  traces íntegras.** Em pelo menos uma instância de teste (chart
+  `suse-observability-2.1.0`, imagem `7.0.0-snapshot...`, uma versão
+  pré-release), clicar no nome de um serviço a partir da lista de Traces
+  (ou acessar as views **Open Telemetry > Services / Service instances /
+  Service namespaces**) resulta em **"Component not found"** ou "No
+  components found", mesmo com as traces sendo ingeridas e pesquisáveis
+  normalmente na view de Traces. Ou seja: **ingestão e busca de
+  traces/logs via OTLP funcionam independentemente da sincronização de
+  componentes/topologia** — se você só precisa validar que a
+  instrumentação está funcionando, a view de Traces já é suficiente. Se
+  esse problema se repetir no seu ambiente, vale checar a versão do chart
+  e abrir um chamado de suporte antes de assumir erro de instrumentação
+  do lado da aplicação.
+- **API REST/GraphQL da plataforma não testada com a API key de
+  ingestão.** Este projeto só valida o caminho de ingestão OTLP
+  (`OTEL_EXPORTER_OTLP_HEADERS`); consultas programáticas via API do
+  SUSE Observability (fora da UI) não fazem parte do escopo aqui.
+- **Sem métricas.** O projeto propositalmente desabilita o exportador de
+  métricas (`OTEL_METRICS_EXPORTER=none`) para manter o foco em traces e
+  logs — não há dashboards de métricas para validar neste demo.
+
 ## Deploy no Kubernetes
 
 ```bash
@@ -215,10 +272,10 @@ hardcoded no manifesto) antes de aplicar em um ambiente real.
 
 ## Segurança
 
-O `Makefile` deste repositório contém uma API key de teste em texto
-plano (`OBSERVABILITY_API_KEY`), usada apenas para testes locais neste
-laboratório. Antes de versionar/compartilhar este projeto para além do
-seu uso local:
+O `Makefile` deste repositório usa um placeholder (`OBSERVABILITY_API_KEY
+= <your-suse-observability-api-key>`) — substitua pela sua própria key
+antes de rodar `make run`. Antes de versionar/compartilhar este projeto
+para além do seu uso local:
 
 - Troque `OBSERVABILITY_API_KEY` por uma variável de ambiente ou
   `.env` fora do controle de versão.
