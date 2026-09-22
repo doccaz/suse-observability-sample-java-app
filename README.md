@@ -209,6 +209,8 @@ mas só o segundo grupo carrega os atributos customizados.
 Depois de rodar os endpoints (`curl http://localhost:8080/api/order/42` etc.),
 as traces aparecem na UI do SUSE Observability em poucos segundos:
 
+![Lista de traces mostrando order-service e inventory-service, com o waterfall server → client → server expandido](docs/screenshots/traces-list.png)
+
 1. Abra a UI (o mesmo host configurado em `OTEL_EXPORTER_OTLP_ENDPOINT`,
    geralmente via ingress/porta 443, não a porta OTLP 4317/4318).
 2. No menu lateral (ícone de hambúrguer no canto superior esquerdo), role
@@ -366,9 +368,15 @@ Com os atributos corretos, depois de gerar tráfego:
 1. **Kubernetes > Pods** (filtros Clusters: All / Namespaces: All) passa a
    listar os Pods reais do cluster, incluindo `order-service-*` e
    `inventory-service-*`.
+
+   ![Kubernetes > Pods listando os Pods reais do cluster, incluindo order-service e inventory-service](docs/screenshots/kubernetes-pods.png)
+
 2. Na lista de **Traces**, clicar no nome de um serviço (`order-service`)
    não dá mais "Component not found" — abre o Component de verdade, com
-   Topology/Events/Metrics.
+   Topology/Events/Metrics, e os labels mostram a correlação completa
+   (`k8s-scope`, `K8s Cluster`, `K8s Namespace`, etc.):
+
+   ![Componente order-service (otel service) com labels de correlação Kubernetes e link para o Service correspondente](docs/screenshots/order-service-component.png)
 
 Sinal no lado da plataforma de que a correlação está funcionando: os logs
 do pod `suse-observability-otel-collector-0` (namespace `suse-observability`)
