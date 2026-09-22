@@ -2,84 +2,87 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Aplicação Spring Boot mínima usada para demonstrar como uma aplicação Java
-"normal" (fora de um cluster Kubernetes) envia **logs** e **traces** via
-OTLP para o SUSE Observability, usando o agente Java do OpenTelemetry
-(zero-code / auto-instrumentação) e, opcionalmente, atributos de span
-adicionados manualmente via API.
+🇧🇷 [Leia em português](README.pt-BR.md)
 
-## Sumário
+Minimal Spring Boot application used to demonstrate how a "normal" Java
+app (outside a Kubernetes cluster) sends **logs** and **traces** via OTLP
+to SUSE Observability, using the OpenTelemetry Java agent (zero-code /
+auto-instrumentation) and, optionally, manually-added span attributes via
+the API.
 
-- [Visão geral](#visão-geral)
-- [Endpoints da aplicação](#endpoints-da-aplicação)
+## Summary
+
+- [Overview](#overview)
+- [Application endpoints](#application-endpoints)
 - [Build](#build)
-- [Executando localmente com Docker](#executando-localmente-com-docker)
-- [Conectando a um SUSE Observability fora do cluster](#conectando-a-um-suse-observability-fora-do-cluster)
-- [Autenticação (API key)](#autenticação-api-key)
-- [Demo: auto-instrumentação vs. instrumentação manual](#demo-auto-instrumentação-vs-instrumentação-manual)
-- [Verificando as traces na UI](#verificando-as-traces-na-ui)
-- [Limitações conhecidas](#limitações-conhecidas)
-- [Deploy no Kubernetes](#deploy-no-kubernetes)
-- [Correlação com a topologia do Kubernetes](#correlação-com-a-topologia-do-kubernetes)
-- [Segurança](#segurança)
+- [Running locally with Docker](#running-locally-with-docker)
+- [Connecting to a SUSE Observability instance outside the cluster](#connecting-to-a-suse-observability-instance-outside-the-cluster)
+- [Authentication (API key)](#authentication-api-key)
+- [Demo: auto-instrumentation vs. manual instrumentation](#demo-auto-instrumentation-vs-manual-instrumentation)
+- [Checking traces in the UI](#checking-traces-in-the-ui)
+- [Known limitations](#known-limitations)
+- [Deploying to Kubernetes](#deploying-to-kubernetes)
+- [Correlating with Kubernetes topology](#correlating-with-kubernetes-topology)
+- [Security](#security)
 
-## Visão geral
+## Overview
 
-O agente Java do OpenTelemetry (`opentelemetry-javaagent.jar`) é baixado no
-build da imagem Docker e injetado via `-javaagent`. Com ele, frameworks como
-Spring MVC e `RestTemplate` são instrumentados automaticamente — spans são
-criados para toda requisição HTTP recebida e para toda chamada HTTP feita
-pela aplicação, sem alterar uma linha de código.
+The OpenTelemetry Java agent (`opentelemetry-javaagent.jar`) is downloaded
+during the Docker image build and injected via `-javaagent`. With it,
+frameworks like Spring MVC and `RestTemplate` are automatically
+instrumented — spans are created for every incoming HTTP request and every
+outgoing HTTP call made by the application, without changing a single line
+of code.
 
-Para gerar traces de verdade (não apenas logs), a aplicação precisa ter
-alguma atividade que o agente saiba instrumentar: HTTP, JDBC, mensageria
-etc. Um loop que só chama `logger.info()` não produz nenhum span. Por isso
-a app expõe endpoints REST que fazem uma chamada HTTP interna
-(`/api/order` → `/api/inventory`), gerando uma trace com spans aninhados
+To generate real traces (not just logs), the application needs some
+activity the agent knows how to instrument: HTTP, JDBC, messaging, etc. A
+loop that only calls `logger.info()` produces no spans at all. That's why
+the app exposes REST endpoints that make an internal HTTP call
+(`/api/order` → `/api/inventory`), generating a trace with nested spans
 (server → client → server).
 
-## Endpoints da aplicação
+## Application endpoints
 
-| Endpoint | Instrumentação | Descrição |
+| Endpoint | Instrumentation | Description |
 |---|---|---|
-| `GET /api/order/{itemId}` | Somente auto-instrumentação (zero código) | Chama `/api/inventory/{itemId}` via `RestTemplate` |
-| `GET /api/inventory/{itemId}` | Somente auto-instrumentação (zero código) | Simula consulta de estoque (~150ms) |
-| `GET /api/manual/order/{itemId}` | Auto-instrumentação + atributos manuais | Mesmo fluxo do `/api/order`, mas enriquece o span com atributos de negócio |
-| `GET /api/manual/inventory/{itemId}` | Auto-instrumentação + atributos manuais | Mesmo fluxo do `/api/inventory`, idem |
+| `GET /api/order/{itemId}` | Auto-instrumentation only (zero code) | Calls `/api/inventory/{itemId}` via `RestTemplate` |
+| `GET /api/inventory/{itemId}` | Auto-instrumentation only (zero code) | Simulates a stock lookup (~150ms) |
+| `GET /api/manual/order/{itemId}` | Auto-instrumentation + manual attributes | Same flow as `/api/order`, but enriches the span with business attributes |
+| `GET /api/manual/inventory/{itemId}` | Auto-instrumentation + manual attributes | Same flow as `/api/inventory`, likewise |
 
-Todo item cujo `hashCode() % 5 == 0` é tratado como "sem estoque" (gera
-`logger.warn`/`logger.error` e, nos endpoints `/api/manual/*`, o atributo
-`order.status=rejected`) — útil para forçar variação nos traces durante a
-demo.
+Any item whose `hashCode() % 5 == 0` is treated as "out of stock" (produces
+a `logger.warn`/`logger.error` and, on the `/api/manual/*` endpoints, the
+`order.status=rejected` attribute) — useful for forcing variation in the
+traces during the demo.
 
-Além disso, a classe `ObservabilityTestApplication` mantém o loop de log
-original (`Mensagem de rotina #N`, com `warn` a cada 5 e `error` a cada 10),
-que continua rodando em paralelo ao servidor web — útil para testar o
-exportador de **logs** independente dos traces.
+In addition, the `ObservabilityTestApplication` class keeps the original
+log loop (`Mensagem de rotina #N`, with a `warn` every 5th message and an
+`error` every 10th), which keeps running alongside the web server — useful
+for testing the **logs** exporter independently of traces.
 
 ## Build
 
-Requer Java 17. Sem Maven local, use um container:
+Requires Java 17. Without a local Maven install, use a container:
 
 ```bash
 docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 \
   mvn -q clean package -DskipTests
 ```
 
-Ou, se tiver Maven/Maven Wrapper instalado:
+Or, if you have Maven/Maven Wrapper installed:
 
 ```bash
 make build
 ```
 
-## Executando localmente com Docker
+## Running locally with Docker
 
 ```bash
-make docker   # builda a imagem com o agente OTel embutido (SLE BCI + OpenJDK 17)
-make run      # sobe o container com --network host, apontando pro OTLP endpoint
+make docker   # builds the image with the OTel agent embedded (SLE BCI + OpenJDK 17)
+make run      # runs the container with --network host, pointed at the OTLP endpoint
 ```
 
-As variáveis de exportação OTel usadas pelo `make run` (ver `Makefile`):
+The OTel export variables used by `make run` (see `Makefile`):
 
 ```
 OTEL_SERVICE_NAME=java-app-bci-local
@@ -91,75 +94,76 @@ OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=SUSEObservability%20<api-key>
 ```
 
-Teste:
+Test it:
 
 ```bash
 curl http://localhost:8080/api/order/42
 curl http://localhost:8080/api/manual/order/42
 ```
 
-Acompanhe os logs do agente (versão carregada, eventuais erros de export):
+Follow the agent's logs (loaded version, any export errors):
 
 ```bash
 docker logs -f java-otel-bci
 ```
 
-Para parar: `make stop`.
+To stop: `make stop`.
 
-## Conectando a um SUSE Observability fora do cluster
+## Connecting to a SUSE Observability instance outside the cluster
 
-Cenário testado: instância do SUSE Observability rodando dentro de um k3s,
-dentro de uma VM KVM local, em uma rede NAT isolada (`virbr-suse`,
-`192.168.110.0/24`) — não acessível diretamente da rede local (192.168.86.x)
-nem, em muitos setups, nem sequer pelo host da VM, porque o
-`otel-collector` do chart é exposto apenas como `ClusterIP` (não há
-`hostPort`/`NodePort` habilitado por padrão).
+Tested scenario: a SUSE Observability instance running inside a k3s
+cluster, inside a local KVM VM, on an isolated NAT network (`virbr-suse`,
+`192.168.110.0/24`) — not directly reachable from the local network
+(192.168.86.x), nor, in many setups, even from the VM's own host, because
+the chart's `otel-collector` is only exposed as a `ClusterIP` (no
+`hostPort`/`NodePort` enabled by default).
 
-Para testar a partir do host da VM (ou de onde quer que você rode a app),
-faça um túnel SSH direto para o IP do pod do collector, ao invés de tentar
-alcançar o IP do node:
+To test from the VM's host (or wherever you're running the app from), open
+an SSH tunnel directly to the collector pod's IP, rather than trying to
+reach the node's IP:
 
 ```bash
-# descubra o pod e seu IP dentro da VM
+# find the pod and its IP inside the VM
 ssh root@<vm-ip> "kubectl -n suse-observability get pod -l app.kubernetes.io/name=suse-observability-otel-collector -o wide"
 
-# abra o túnel local (mantenha rodando em background)
+# open the local tunnel (keep it running in the background)
 ssh -f -N -L 4317:<pod-ip>:4317 -L 4318:<pod-ip>:4318 root@<vm-ip>
 ```
 
-Com o túnel de pé, `localhost:4317`/`localhost:4318` no seu host passam a
-ser o OTLP gRPC/HTTP do SUSE Observability. É esse endpoint que
-`OBSERVABILITY_ENDPOINT` no `Makefile` usa.
+With the tunnel up, `localhost:4317`/`localhost:4318` on your host become
+SUSE Observability's OTLP gRPC/HTTP endpoint. That's the endpoint
+`OBSERVABILITY_ENDPOINT` in the `Makefile` uses.
 
-> Nota sobre redes bridged/macvtap: se a VM estiver anexada à LAN via
-> macvtap (`type='direct'`, `mode='bridge'`) para obter IP via DHCP na rede
-> 192.168.86.x, o **host** que criou a interface macvtap nunca consegue
-> falar com a própria VM através da mesma NIC física — é uma limitação do
-> kernel Linux (sem hairpin), não um erro de configuração. Outros
-> dispositivos da LAN conseguem alcançar a VM normalmente. Nesse projeto
-> optamos por manter a VM só na rede NAT interna e usar túnel SSH para
-> testes a partir do host.
+> Note on bridged/macvtap networks: if the VM is attached to the LAN via
+> macvtap (`type='direct'`, `mode='bridge'`) to get a DHCP IP on the
+> 192.168.86.x network, the **host** that created the macvtap interface can
+> never talk to the VM itself through that same physical NIC — this is a
+> Linux kernel limitation (no hairpin), not a misconfiguration. Other
+> devices on the LAN can reach the VM normally. In this project we chose
+> to keep the VM on the internal NAT network only and use an SSH tunnel
+> for testing from the host.
 
-## Autenticação (API key)
+## Authentication (API key)
 
-O SUSE Observability usa um esquema de autorização próprio no
-OTLP receiver (extensão `ingestion_api_key_auth`, `schema: SUSEObservability`
-no `values.yaml` do chart). O header esperado é:
+SUSE Observability uses its own authorization scheme on the OTLP receiver
+(the `ingestion_api_key_auth` extension, `schema: SUSEObservability` in
+the chart's `values.yaml`). The expected header is:
 
 ```
 Authorization: SUSEObservability <api-key>
 ```
 
-Na variável de ambiente `OTEL_EXPORTER_OTLP_HEADERS` (que segue o formato
-`chave=valor` separado por vírgula, sem URL-decoding automático do valor),
-o espaço entre o esquema e a chave precisa ser URL-encoded:
+In the `OTEL_EXPORTER_OTLP_HEADERS` environment variable (which follows a
+`key=value` format separated by commas, with no automatic URL-decoding of
+the value), the space between the scheme and the key needs to be
+URL-encoded:
 
 ```
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=SUSEObservability%20<api-key>
 ```
 
-Teste rápido com `curl` (via túnel, porta 4318/HTTP) para validar uma key
-sem precisar subir a aplicação inteira:
+Quick `curl` test (via the tunnel, port 4318/HTTP) to validate a key
+without having to bring up the whole application:
 
 ```bash
 curl -i -X POST http://localhost:4318/v1/traces \
@@ -168,170 +172,172 @@ curl -i -X POST http://localhost:4318/v1/traces \
   --data '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"api-key-test"}}]},"scopeSpans":[{"scope":{"name":"manual-test"},"spans":[{"traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","name":"test-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000000100000000"}]}]}]}'
 ```
 
-- Sem header ou key inválida → `401 Unauthorized`
-- Key válida → `200` com `{"partialSuccess":{}}`
+- No header or invalid key → `401 Unauthorized`
+- Valid key → `200` with `{"partialSuccess":{}}`
 
-## Demo: auto-instrumentação vs. instrumentação manual
+## Demo: auto-instrumentation vs. manual instrumentation
 
-A app tem dois pares de endpoints idênticos em comportamento, para
-comparar lado a lado no SUSE Observability:
+The app has two behaviorally identical pairs of endpoints, for side-by-side
+comparison in SUSE Observability:
 
-1. **Auto-instrumentação pura** — `OrderController` / `InventoryController`
-   (`/api/order`, `/api/inventory`). Nenhuma linha de código relacionada a
-   OpenTelemetry. Todos os spans (HTTP server + HTTP client) vêm de graça
-   do javaagent.
+1. **Pure auto-instrumentation** — `OrderController` /
+   `InventoryController` (`/api/order`, `/api/inventory`). No
+   OpenTelemetry-related code at all. Every span (HTTP server + HTTP
+   client) comes for free from the javaagent.
 
-2. **Instrumentação direcionada** — `ManualOrderController` /
+2. **Targeted instrumentation** — `ManualOrderController` /
    `ManualInventoryController` (`/api/manual/order`,
-   `/api/manual/inventory`). Mesmo fluxo, mas usando
-   `Span.current().setAttribute(...)` (dependência `io.opentelemetry:opentelemetry-api`,
-   só compile-time — o javaagent injeta a implementação real em runtime)
-   para adicionar atributos de negócio ao span já criado pela
-   auto-instrumentação: `order.item_id`, `order.available`, `order.status`,
-   `inventory.item_id`, `inventory.available`.
+   `/api/manual/inventory`). Same flow, but using
+   `Span.current().setAttribute(...)` (dependency
+   `io.opentelemetry:opentelemetry-api`, compile-time only — the javaagent
+   injects the real implementation at runtime) to add business attributes
+   to the span already created by auto-instrumentation: `order.item_id`,
+   `order.available`, `order.status`, `inventory.item_id`,
+   `inventory.available`.
 
-Para demonstrar:
+To demonstrate:
 
 ```bash
-curl http://localhost:8080/api/order/42          # trace só com atributos HTTP padrão
-curl http://localhost:8080/api/order/5           # força "sem estoque" (5 % 5 == 0)
+curl http://localhost:8080/api/order/42          # trace with only default HTTP attributes
+curl http://localhost:8080/api/order/5           # forces "out of stock" (5 % 5 == 0)
 
-curl http://localhost:8080/api/manual/order/42   # mesma trace + atributos de negócio
+curl http://localhost:8080/api/manual/order/42   # same trace + business attributes
 curl http://localhost:8080/api/manual/order/5
 ```
 
-No SUSE Observability, compare os spans de `/api/order/*` com os de
-`/api/manual/order/*`: a estrutura (server → client → server) é idêntica,
-mas só o segundo grupo carrega os atributos customizados.
+In SUSE Observability, compare the spans from `/api/order/*` with those
+from `/api/manual/order/*`: the structure (server → client → server) is
+identical, but only the second group carries the custom attributes.
 
-## Verificando as traces na UI
+## Checking traces in the UI
 
-Depois de rodar os endpoints (`curl http://localhost:8080/api/order/42` etc.),
-as traces aparecem na UI do SUSE Observability em poucos segundos:
+After hitting the endpoints (`curl http://localhost:8080/api/order/42`
+etc.), traces show up in the SUSE Observability UI within a few seconds:
 
-![Lista de traces mostrando order-service e inventory-service, com o waterfall server → client → server expandido](docs/screenshots/traces-list.png)
+![Traces list showing order-service and inventory-service, with the server → client → server waterfall expanded](docs/screenshots/traces-list.png)
 
-1. Abra a UI (o mesmo host configurado em `OTEL_EXPORTER_OTLP_ENDPOINT`,
-   geralmente via ingress/porta 443, não a porta OTLP 4317/4318).
-2. No menu lateral (ícone de hambúrguer no canto superior esquerdo), role
-   até encontrar **Traces** — é um item de nível superior, fora da seção
-   "Open Telemetry".
-3. A lista mostra todas as traces recentes, com **Status**, **OTEL
-   service**, **Name** (rota HTTP), **Duration** e **Start time**. Use os
-   filtros (`Status`, `Attributes`, `Duration`, intervalo de tempo) para
-   restringir a busca — por exemplo, filtre por `order-service` ou
-   `inventory-service` para achar as traces geradas pelos testes acima.
-4. Clique em uma linha da tabela para expandir o waterfall da trace
-   inline: você verá o span `GET /api/order/{itemId}` (server, no
-   `order-service`) contendo um span filho `GET` (client) que por sua vez
-   contém `GET /api/inventory/{itemId}` (server, no `inventory-service`) —
-   exatamente a cadeia server → client → server descrita na seção anterior.
-5. Clique em um span específico do waterfall para abrir o painel **Span
-   details** à direita, com `Status`, `Span kind`, `Scope name/version`,
-   `Start/End time` etc.
-6. Expanda **Span attributes** nesse painel para ver os atributos do span.
-   Nos endpoints `/api/manual/*`, é aqui que aparecem os atributos
-   customizados adicionados via `Span.current().setAttribute(...)`:
-   `order.item_id`, `order.available`, `order.status` (e os equivalentes
-   `inventory.*` no lado do inventory-service) — ao lado dos atributos
-   HTTP/rede padrão (`http.route`, `http.response.status_code`,
-   `network.peer.address` etc.) que vêm de graça da auto-instrumentação.
+1. Open the UI (the same host configured in `OTEL_EXPORTER_OTLP_ENDPOINT`,
+   usually via ingress/port 443, not the OTLP port 4317/4318).
+2. In the side menu (hamburger icon in the top-left corner), scroll until
+   you find **Traces** — it's a top-level item, outside the "Open
+   Telemetry" section.
+3. The list shows all recent traces, with **Status**, **OTEL service**,
+   **Name** (HTTP route), **Duration**, and **Start time**. Use the
+   filters (`Status`, `Attributes`, `Duration`, time range) to narrow the
+   search — for example, filter by `order-service` or `inventory-service`
+   to find the traces generated by the tests above.
+4. Click a row in the table to expand the trace's waterfall inline: you'll
+   see the `GET /api/order/{itemId}` span (server, on `order-service`)
+   containing a child `GET` span (client) which in turn contains
+   `GET /api/inventory/{itemId}` (server, on `inventory-service`) — exactly
+   the server → client → server chain described in the previous section.
+5. Click a specific span in the waterfall to open the **Span details**
+   panel on the right, with `Status`, `Span kind`, `Scope name/version`,
+   `Start/End time`, etc.
+6. Expand **Span attributes** in that panel to see the span's attributes.
+   On the `/api/manual/*` endpoints, this is where the custom attributes
+   added via `Span.current().setAttribute(...)` show up: `order.item_id`,
+   `order.available`, `order.status` (and the `inventory.*` equivalents on
+   the inventory-service side) — alongside the default HTTP/network
+   attributes (`http.route`, `http.response.status_code`,
+   `network.peer.address`, etc.) that come for free from
+   auto-instrumentation.
 
-## Limitações conhecidas
+## Known limitations
 
-- **"Component not found" ao clicar num serviço a partir de uma trace,
-  ou `Kubernetes > Pods`/`Open Telemetry > Services` vazios, quase nunca é
-  um problema de instrumentação da aplicação.** Investigamos esse sintoma
-  a fundo (ver `TOPOLOGY-TROUBLESHOOTING.md` neste repo para o
-  histórico completo) e a causa raiz **não** estava na app nem no OTel
-  collector — ingestão de traces/logs sempre funcionou. Os três
-  requisitos que faltavam, do lado da plataforma:
-  1. O chart `suse-observability` sozinho só sobe o backend. É preciso
-     instalar também o chart **`suse-observability-agent`** (cluster-agent
-     etc.) — é ele que observa a API do Kubernetes e materializa
-     Pods/Deployments como Components.
-  2. O `stackstate.cluster.name` desse agente precisa bater exatamente
-     com o nome configurado na instância do StackPack **Kubernetes**
-     (**Settings → StackPacks → Installed Instances** na UI) — nomes
-     diferentes = a instância fica "Installed. Waiting for data..."
-     para sempre, sem nenhum erro visível.
-  3. A aplicação instrumentada precisa emitir atributos `k8s.*` no
-     resource (pod name, namespace, node) para que o StackPack
-     OpenTelemetry consiga correlacionar o `service`/`service-instance`
-     com o Pod real — sem isso, as traces continuam aparecendo
-     normalmente na view de Traces, mas o Component do serviço nunca é
-     criado. Veja [Correlação com a topologia do
-     Kubernetes](#correlação-com-a-topologia-do-kubernetes) para como
-     este projeto resolve isso.
+- **"Component not found" when clicking a service from a trace, or empty
+  `Kubernetes > Pods`/`Open Telemetry > Services` views, is almost never
+  an application-instrumentation problem.** We investigated this symptom
+  in depth (see `TOPOLOGY-TROUBLESHOOTING.md` in this repo for the full
+  history), and the root cause **wasn't** in the app or in the OTel
+  collector — trace/log ingestion always worked. The three missing
+  requirements, all on the platform side:
+  1. The `suse-observability` chart alone only stands up the backend. You
+     also need to install the **`suse-observability-agent`** chart
+     (cluster-agent, etc.) — it's the one that watches the Kubernetes API
+     and materializes Pods/Deployments as Components.
+  2. That agent's `stackstate.cluster.name` needs to exactly match the
+     name configured on the **Kubernetes** StackPack instance
+     (**Settings → StackPacks → Installed Instances** in the UI) —
+     mismatched names mean the instance stays "Installed. Waiting for
+     data..." forever, with no visible error.
+  3. The instrumented application needs to emit `k8s.*` resource
+     attributes (pod name, namespace, node) so the OpenTelemetry StackPack
+     can correlate the `service`/`service-instance` with the real Pod —
+     without this, traces keep showing up normally in the Traces view,
+     but the service's Component is never created. See [Correlating with
+     Kubernetes topology](#correlating-with-kubernetes-topology) for how
+     this project handles it.
 
-  Se você só precisa validar que a instrumentação está funcionando, a
-  view de **Traces** já é suficiente independentemente desses três
-  pontos — ingestão OTLP nunca dependeu deles.
-- **API REST/GraphQL da plataforma não testada com a API key de
-  ingestão.** Este projeto só valida o caminho de ingestão OTLP
-  (`OTEL_EXPORTER_OTLP_HEADERS`); consultas programáticas via API do
-  SUSE Observability (fora da UI) não fazem parte do escopo aqui.
-- **Sem métricas.** O projeto propositalmente desabilita o exportador de
-  métricas (`OTEL_METRICS_EXPORTER=none`) para manter o foco em traces e
-  logs — não há dashboards de métricas para validar neste demo.
+  If you only need to validate that instrumentation is working, the
+  **Traces** view is enough on its own, independent of those three
+  points — OTLP ingestion never depended on them.
+- **Platform REST/GraphQL API not tested with the ingestion API key.**
+  This project only validates the OTLP ingestion path
+  (`OTEL_EXPORTER_OTLP_HEADERS`); programmatic queries via the SUSE
+  Observability API (outside the UI) are out of scope here.
+- **No metrics.** The project intentionally disables the metrics exporter
+  (`OTEL_METRICS_EXPORTER=none`) to keep the focus on traces and logs —
+  there are no metrics dashboards to validate in this demo.
 
-## Deploy no Kubernetes
+## Deploying to Kubernetes
 
-Além do `deployment.yaml` na raiz (exemplo genérico de manifesto para um
-único serviço fora deste cluster, documentado por si só no arquivo), o
-diretório `k8s/` contém um deploy **real, dentro do mesmo cluster** onde o
-SUSE Observability roda — `order-service` e `inventory-service` como dois
-Deployments/Services de verdade no k3s, se chamando via DNS interno do
-cluster. Essa é a forma recomendada de testar a topologia completa (não só
-traces), porque:
+Besides the `deployment.yaml` at the repo root (a generic manifest example
+for a single service outside this cluster, documented inline in the
+file), the `k8s/` directory contains a **real, in-cluster** deployment —
+`order-service` and `inventory-service` as two real Deployments/Services
+in the k3s cluster, calling each other via the cluster's internal DNS.
+This is the recommended way to test the full topology (not just traces),
+because:
 
-- Não precisa de túnel SSH nem de `ClusterIP` exposta externamente — a app
-  fala com `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317`
-  diretamente.
-- Gera uma relação `order-service → inventory-service` real entre dois
-  Pods de verdade, correlacionável com a topologia do Kubernetes (ver
-  próxima seção).
+- No SSH tunnel or externally-exposed `ClusterIP` is needed — the app
+  talks to
+  `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317`
+  directly.
+- It generates a real `order-service → inventory-service` relation between
+  two real Pods, correlatable with the Kubernetes topology (see the next
+  section).
 
-Passo a passo (testado num k3s single-node):
+Step by step (tested on a single-node k3s):
 
 ```bash
-# 1. build da imagem localmente (mesmo Dockerfile do restante do projeto)
+# 1. build the image locally (same Dockerfile as the rest of the project)
 docker build -t sample-java-app:k8s-demo .
 
-# 2. importar a imagem no containerd do cluster (sem precisar de registry —
-#    útil em labs sem registry próprio; ajuste para `docker push` num
-#    cenário real com registry configurado)
+# 2. import the image into the cluster's containerd (no registry needed —
+#    handy in labs without a registry of their own; swap for `docker push`
+#    in a real setup with a registry configured)
 docker save sample-java-app:k8s-demo -o /tmp/sample-java-app.tar
 scp /tmp/sample-java-app.tar root@<vm-ip>:/root/
 ssh root@<vm-ip> "k3s ctr images import /root/sample-java-app.tar"
 
-# 3. criar o namespace e o Secret com o header OTLP (nunca commitar a key/token)
+# 3. create the namespace and the Secret holding the OTLP header (never commit the key/token)
 kubectl create namespace sample-app-demo
 kubectl create secret generic sample-app-observability -n sample-app-demo \
-  --from-literal=otlp-headers='Authorization=SUSEObservability%20<api-key-ou-service-token>'
+  --from-literal=otlp-headers='Authorization=SUSEObservability%20<api-key-or-service-token>'
 
-# 4. aplicar os manifestos
+# 4. apply the manifests
 kubectl apply -f k8s/inventory-deployment.yaml -f k8s/order-deployment.yaml
 
-# 5. gerar tráfego
+# 5. generate traffic
 kubectl exec -n sample-app-demo deploy/order-service -- curl -s http://localhost:8080/api/order/42
 kubectl exec -n sample-app-demo deploy/order-service -- curl -s http://localhost:8080/api/manual/order/42
 ```
 
-Os manifestos usam `imagePullPolicy: Never` (porque a imagem só existe
-localmente no containerd do node, importada no passo 2) e
-`runAsNonRoot: true` + `runAsUser: 1000` — o `appuser` da imagem (ver
-`Dockerfile`) é UID 1000 mas não-numérico em `USER`, e o Kubernetes não
-consegue validar `runAsNonRoot` sem o UID explícito (dá
-`CreateContainerConfigError` sem isso).
+The manifests use `imagePullPolicy: Never` (because the image only exists
+locally in the node's containerd, imported in step 2) and
+`runAsNonRoot: true` + `runAsUser: 1000` — the image's `appuser` (see
+`Dockerfile`) is UID 1000 but non-numeric in `USER`, and Kubernetes can't
+validate `runAsNonRoot` without the explicit UID (you get a
+`CreateContainerConfigError` otherwise).
 
-## Correlação com a topologia do Kubernetes
+## Correlating with Kubernetes topology
 
-Rodar dentro do cluster (seção anterior) resolve a parte de rede, mas
-**não é suficiente sozinho** para o serviço aparecer como Component
-correlacionado a um Pod real — é preciso que a aplicação emita atributos
-`k8s.*` no resource OTel, via Kubernetes Downward API. Os manifestos em
-`k8s/` já fazem isso:
+Running inside the cluster (previous section) solves the networking part,
+but **isn't enough on its own** for the service to show up as a Component
+correlated to a real Pod — the application also needs to emit `k8s.*`
+attributes in the OTel resource, via the Kubernetes Downward API. The
+manifests in `k8s/` already do this:
 
 ```yaml
 env:
@@ -347,54 +353,53 @@ env:
     value: "deployment.environment=lab,service.namespace=sample-app-demo,\
 k8s.pod.name=$(K8S_POD_NAME),k8s.pod.uid=$(K8S_POD_UID),\
 k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.node.name=$(K8S_NODE_NAME),\
-k8s.deployment.name=order-service,k8s.cluster.name=<nome-da-instância-kubernetes-stackpack>"
+k8s.deployment.name=order-service,k8s.cluster.name=<your-kubernetes-stackpack-instance-name>"
 ```
 
-`$(VAR)` dentro de um valor de `env` referencia outra variável declarada
-no mesmo container (interpolação nativa do Kubernetes) — não precisa de
-init container nem de script wrapper.
+`$(VAR)` inside an `env` value references another variable declared in the
+same container (native Kubernetes interpolation) — no init container or
+wrapper script needed.
 
-`k8s.cluster.name` precisa bater **exatamente** com o nome configurado na
-instância do StackPack Kubernetes instalada na plataforma (**Settings →
-StackPacks → Kubernetes → Installed Instances**), não com o nome real do
-seu cluster/VM. Sem essa correspondência, os componentes do StackPack
-Kubernetes (Pods/Deployments) nunca aparecem — a instância fica
-"Installed. Waiting for data..." indefinidamente, sem erro visível — e,
-por consequência, o StackPack OpenTelemetry também não consegue
-correlacionar o `service`/`service-instance` do seu app com um Pod real.
+`k8s.cluster.name` needs to match **exactly** the name configured on the
+Kubernetes StackPack instance installed on the platform (**Settings →
+StackPacks → Kubernetes → Installed Instances**), not your actual
+cluster/VM name. Without that match, the Kubernetes StackPack's components
+(Pods/Deployments) never show up — the instance stays "Installed. Waiting
+for data..." indefinitely, with no visible error — and, as a consequence,
+the OpenTelemetry StackPack also can't correlate your app's
+`service`/`service-instance` with a real Pod.
 
-Com os atributos corretos, depois de gerar tráfego:
+With the correct attributes, after generating traffic:
 
-1. **Kubernetes > Pods** (filtros Clusters: All / Namespaces: All) passa a
-   listar os Pods reais do cluster, incluindo `order-service-*` e
+1. **Kubernetes > Pods** (filters Clusters: All / Namespaces: All) starts
+   listing the cluster's real Pods, including `order-service-*` and
    `inventory-service-*`.
 
-   ![Kubernetes > Pods listando os Pods reais do cluster, incluindo order-service e inventory-service](docs/screenshots/kubernetes-pods.png)
+   ![Kubernetes > Pods listing the cluster's real Pods, including order-service and inventory-service](docs/screenshots/kubernetes-pods.png)
 
-2. Na lista de **Traces**, clicar no nome de um serviço (`order-service`)
-   não dá mais "Component not found" — abre o Component de verdade, com
-   Topology/Events/Metrics, e os labels mostram a correlação completa
+2. In the **Traces** list, clicking a service name (`order-service`) no
+   longer gives "Component not found" — it opens the real Component, with
+   Topology/Events/Metrics, and the labels show the full correlation
    (`k8s-scope`, `K8s Cluster`, `K8s Namespace`, etc.):
 
-   ![Componente order-service (otel service) com labels de correlação Kubernetes e link para o Service correspondente](docs/screenshots/order-service-component.png)
+   ![order-service (otel service) component with Kubernetes correlation labels and a link to the matching Service](docs/screenshots/order-service-component.png)
 
-Sinal no lado da plataforma de que a correlação está funcionando: os logs
-do pod `suse-observability-otel-collector-0` (namespace `suse-observability`)
-mostram, pouco depois do primeiro tráfego com os atributos `k8s.*`
-presentes, uma linha `Topology stream created` para
+Signal on the platform side that correlation is working: the
+`suse-observability-otel-collector-0` pod's logs (namespace
+`suse-observability`) show, shortly after the first traffic with the
+`k8s.*` attributes present, a `Topology stream created` line for
 `dataSource: "urn:stackpack:open-telemetry:otel-component-mapping:service"`
-(e `...:service-instance`, `...:pod`) — sem os atributos `k8s.*`, esses
-streams específicos nunca chegam a ser criados, mesmo com as traces
-ingerindo normalmente.
+(and `...:service-instance`, `...:pod`) — without the `k8s.*` attributes,
+these specific streams never get created, even with traces ingesting
+normally.
 
-## Segurança
+## Security
 
-O `Makefile` deste repositório usa um placeholder (`OBSERVABILITY_API_KEY
-= <your-suse-observability-api-key>`) — substitua pela sua própria key
-antes de rodar `make run`. Antes de versionar/compartilhar este projeto
-para além do seu uso local:
+This repository's `Makefile` uses a placeholder
+(`OBSERVABILITY_API_KEY = <your-suse-observability-api-key>`) — replace it
+with your own key before running `make run`. Before versioning/sharing
+this project beyond your local use:
 
-- Troque `OBSERVABILITY_API_KEY` por uma variável de ambiente ou
-  `.env` fora do controle de versão.
-- Nunca hardcode a key em `deployment.yaml` — use um `Secret` do
-  Kubernetes.
+- Replace `OBSERVABILITY_API_KEY` with an environment variable or a
+  version-control-excluded `.env` file.
+- Never hardcode the key in `deployment.yaml` — use a Kubernetes `Secret`.
