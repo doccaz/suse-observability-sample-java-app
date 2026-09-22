@@ -20,6 +20,7 @@ adicionados manualmente via API.
 - [Verificando as traces na UI](#verificando-as-traces-na-ui)
 - [Limitações conhecidas](#limitações-conhecidas)
 - [Deploy no Kubernetes](#deploy-no-kubernetes)
+- [Correlação com a topologia do Kubernetes](#correlação-com-a-topologia-do-kubernetes)
 - [Segurança](#segurança)
 
 ## Visão geral
@@ -236,18 +237,34 @@ as traces aparecem na UI do SUSE Observability em poucos segundos:
 
 ## Limitações conhecidas
 
-- **Correlação de topologia/componentes pode não funcionar mesmo com
-  traces íntegras.** Em pelo menos uma instância de teste, clicar no nome
-  de um serviço a partir da lista de Traces (ou acessar as views **Open
-  Telemetry > Services / Service instances / Service namespaces**)
-  resulta em **"Component not found"** ou "No components found", mesmo
-  com as traces sendo ingeridas e pesquisáveis normalmente na view de
-  Traces. Ou seja: **ingestão e busca de traces/logs via OTLP funcionam
-  independentemente da sincronização de componentes/topologia** — se você
-  só precisa validar que a instrumentação está funcionando, a view de
-  Traces já é suficiente. Se esse problema se repetir no seu ambiente,
-  vale checar a versão do chart e abrir um chamado de suporte antes de
-  assumir erro de instrumentação do lado da aplicação.
+- **"Component not found" ao clicar num serviço a partir de uma trace,
+  ou `Kubernetes > Pods`/`Open Telemetry > Services` vazios, quase nunca é
+  um problema de instrumentação da aplicação.** Investigamos esse sintoma
+  a fundo (ver `TOPOLOGY-TROUBLESHOOTING.md` neste repo para o
+  histórico completo) e a causa raiz **não** estava na app nem no OTel
+  collector — ingestão de traces/logs sempre funcionou. Os três
+  requisitos que faltavam, do lado da plataforma:
+  1. O chart `suse-observability` sozinho só sobe o backend. É preciso
+     instalar também o chart **`suse-observability-agent`** (cluster-agent
+     etc.) — é ele que observa a API do Kubernetes e materializa
+     Pods/Deployments como Components.
+  2. O `stackstate.cluster.name` desse agente precisa bater exatamente
+     com o nome configurado na instância do StackPack **Kubernetes**
+     (**Settings → StackPacks → Installed Instances** na UI) — nomes
+     diferentes = a instância fica "Installed. Waiting for data..."
+     para sempre, sem nenhum erro visível.
+  3. A aplicação instrumentada precisa emitir atributos `k8s.*` no
+     resource (pod name, namespace, node) para que o StackPack
+     OpenTelemetry consiga correlacionar o `service`/`service-instance`
+     com o Pod real — sem isso, as traces continuam aparecendo
+     normalmente na view de Traces, mas o Component do serviço nunca é
+     criado. Veja [Correlação com a topologia do
+     Kubernetes](#correlação-com-a-topologia-do-kubernetes) para como
+     este projeto resolve isso.
+
+  Se você só precisa validar que a instrumentação está funcionando, a
+  view de **Traces** já é suficiente independentemente desses três
+  pontos — ingestão OTLP nunca dependeu deles.
 - **API REST/GraphQL da plataforma não testada com a API key de
   ingestão.** Este projeto só valida o caminho de ingestão OTLP
   (`OTEL_EXPORTER_OTLP_HEADERS`); consultas programáticas via API do
@@ -258,15 +275,109 @@ as traces aparecem na UI do SUSE Observability em poucos segundos:
 
 ## Deploy no Kubernetes
 
+Além do `deployment.yaml` na raiz (exemplo genérico de manifesto para um
+único serviço fora deste cluster, documentado por si só no arquivo), o
+diretório `k8s/` contém um deploy **real, dentro do mesmo cluster** onde o
+SUSE Observability roda — `order-service` e `inventory-service` como dois
+Deployments/Services de verdade no k3s, se chamando via DNS interno do
+cluster. Essa é a forma recomendada de testar a topologia completa (não só
+traces), porque:
+
+- Não precisa de túnel SSH nem de `ClusterIP` exposta externamente — a app
+  fala com `suse-observability-otel-collector.suse-observability.svc.cluster.local:4317`
+  diretamente.
+- Gera uma relação `order-service → inventory-service` real entre dois
+  Pods de verdade, correlacionável com a topologia do Kubernetes (ver
+  próxima seção).
+
+Passo a passo (testado num k3s single-node):
+
 ```bash
-# edite deployment.yaml: registry da imagem e OTEL_EXPORTER_OTLP_ENDPOINT
-make deploy
+# 1. build da imagem localmente (mesmo Dockerfile do restante do projeto)
+docker build -t sample-java-app:k8s-demo .
+
+# 2. importar a imagem no containerd do cluster (sem precisar de registry —
+#    útil em labs sem registry próprio; ajuste para `docker push` num
+#    cenário real com registry configurado)
+docker save sample-java-app:k8s-demo -o /tmp/sample-java-app.tar
+scp /tmp/sample-java-app.tar root@<vm-ip>:/root/
+ssh root@<vm-ip> "k3s ctr images import /root/sample-java-app.tar"
+
+# 3. criar o namespace e o Secret com o header OTLP (nunca commitar a key/token)
+kubectl create namespace sample-app-demo
+kubectl create secret generic sample-app-observability -n sample-app-demo \
+  --from-literal=otlp-headers='Authorization=SUSEObservability%20<api-key-ou-service-token>'
+
+# 4. aplicar os manifestos
+kubectl apply -f k8s/inventory-deployment.yaml -f k8s/order-deployment.yaml
+
+# 5. gerar tráfego
+kubectl exec -n sample-app-demo deploy/order-service -- curl -s http://localhost:8080/api/order/42
+kubectl exec -n sample-app-demo deploy/order-service -- curl -s http://localhost:8080/api/manual/order/42
 ```
 
-O manifesto já vem configurado com `OTEL_LOGS_EXPORTER=otlp`,
-`OTEL_TRACES_EXPORTER=otlp` e `OTEL_METRICS_EXPORTER=none`. Adicione
-`OTEL_EXPORTER_OTLP_HEADERS` com a API key real via `Secret` (não
-hardcoded no manifesto) antes de aplicar em um ambiente real.
+Os manifestos usam `imagePullPolicy: Never` (porque a imagem só existe
+localmente no containerd do node, importada no passo 2) e
+`runAsNonRoot: true` + `runAsUser: 1000` — o `appuser` da imagem (ver
+`Dockerfile`) é UID 1000 mas não-numérico em `USER`, e o Kubernetes não
+consegue validar `runAsNonRoot` sem o UID explícito (dá
+`CreateContainerConfigError` sem isso).
+
+## Correlação com a topologia do Kubernetes
+
+Rodar dentro do cluster (seção anterior) resolve a parte de rede, mas
+**não é suficiente sozinho** para o serviço aparecer como Component
+correlacionado a um Pod real — é preciso que a aplicação emita atributos
+`k8s.*` no resource OTel, via Kubernetes Downward API. Os manifestos em
+`k8s/` já fazem isso:
+
+```yaml
+env:
+  - name: K8S_POD_NAME
+    valueFrom: { fieldRef: { fieldPath: metadata.name } }
+  - name: K8S_POD_UID
+    valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+  - name: K8S_NAMESPACE_NAME
+    valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+  - name: K8S_NODE_NAME
+    valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+  - name: OTEL_RESOURCE_ATTRIBUTES
+    value: "deployment.environment=lab,service.namespace=sample-app-demo,\
+k8s.pod.name=$(K8S_POD_NAME),k8s.pod.uid=$(K8S_POD_UID),\
+k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.node.name=$(K8S_NODE_NAME),\
+k8s.deployment.name=order-service,k8s.cluster.name=<nome-da-instância-kubernetes-stackpack>"
+```
+
+`$(VAR)` dentro de um valor de `env` referencia outra variável declarada
+no mesmo container (interpolação nativa do Kubernetes) — não precisa de
+init container nem de script wrapper.
+
+`k8s.cluster.name` precisa bater **exatamente** com o nome configurado na
+instância do StackPack Kubernetes instalada na plataforma (**Settings →
+StackPacks → Kubernetes → Installed Instances**), não com o nome real do
+seu cluster/VM. Sem essa correspondência, os componentes do StackPack
+Kubernetes (Pods/Deployments) nunca aparecem — a instância fica
+"Installed. Waiting for data..." indefinidamente, sem erro visível — e,
+por consequência, o StackPack OpenTelemetry também não consegue
+correlacionar o `service`/`service-instance` do seu app com um Pod real.
+
+Com os atributos corretos, depois de gerar tráfego:
+
+1. **Kubernetes > Pods** (filtros Clusters: All / Namespaces: All) passa a
+   listar os Pods reais do cluster, incluindo `order-service-*` e
+   `inventory-service-*`.
+2. Na lista de **Traces**, clicar no nome de um serviço (`order-service`)
+   não dá mais "Component not found" — abre o Component de verdade, com
+   Topology/Events/Metrics.
+
+Sinal no lado da plataforma de que a correlação está funcionando: os logs
+do pod `suse-observability-otel-collector-0` (namespace `suse-observability`)
+mostram, pouco depois do primeiro tráfego com os atributos `k8s.*`
+presentes, uma linha `Topology stream created` para
+`dataSource: "urn:stackpack:open-telemetry:otel-component-mapping:service"`
+(e `...:service-instance`, `...:pod`) — sem os atributos `k8s.*`, esses
+streams específicos nunca chegam a ser criados, mesmo com as traces
+ingerindo normalmente.
 
 ## Segurança
 
